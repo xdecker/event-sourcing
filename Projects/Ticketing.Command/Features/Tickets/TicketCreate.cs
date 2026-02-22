@@ -3,6 +3,8 @@ using Common.Core.Events;
 using FluentValidation;
 using MediatR;
 using MongoDB.Driver;
+using Ticketing.Command.Application.Aggregates;
+using Ticketing.Command.Domain.Abstracts;
 using Ticketing.Command.Domain.EventModels;
 using Ticketing.Command.Features.Apis;
 
@@ -19,20 +21,21 @@ public sealed class TicketCreate : IMinimalApi
            CancellationToken cancellationToken
         ) =>
         {
-            var command = new TicketCreateCommand(ticketCreateRequest);
+            var id = Guid.NewGuid().ToString();
+            var command = new TicketCreateCommand(id, ticketCreateRequest);
             var result = await mediator.Send(command, cancellationToken);
             return Results.Ok(result);
         });
     }
 
-    public sealed class TicketCreateRequest(string username, string typeError, string detailError)
+    public sealed class TicketCreateRequest(string username, int typeError, string detailError)
     {
         public string Username { get; set; } = username;
-        public string TypeError { get; set; } = typeError;
+        public int TypeError { get; set; } = typeError;
         public string DetailError { get; set; } = detailError;
     }
 
-    public record TicketCreateCommand(TicketCreateRequest ticketCreateRequest) : IRequest<bool>;
+    public record TicketCreateCommand(string Id, TicketCreateRequest ticketCreateRequest) : IRequest<bool>;
 
     public class TicketCreateCommandValidator : AbstractValidator<TicketCreateCommand>
     {
@@ -40,6 +43,7 @@ public sealed class TicketCreate : IMinimalApi
         {
             RuleFor(x => x.ticketCreateRequest)
             .SetValidator(new TicketCreateValidator());
+            RuleFor(x => x.Id).NotEmpty().WithMessage("Ingrese el id del evento");
         }
     }
 
@@ -47,52 +51,24 @@ public sealed class TicketCreate : IMinimalApi
     {
         public TicketCreateValidator()
         {
-            RuleFor(x => x.Username).NotEmpty().WithMessage("Ingrese un username");
+            RuleFor(x => x.Username).NotEmpty().WithMessage("Ingrese un username").EmailAddress().WithMessage("Debe ser un email");
             RuleFor(x => x.DetailError).NotEmpty().WithMessage("Ingrese el detalle del error");
-
+            RuleFor(x => x.TypeError).NotEmpty().WithMessage("Debe indicar el tipo de error").InclusiveBetween(1, 5).WithMessage("El rango del error es del 1 al 5");
         }
     }
 
-    public sealed class TicketCreateCommandHandler(IEventModelRepository eventModelRepository, IMapper mapper)
+    public sealed class TicketCreateCommandHandler(IEventSourcingHandler<TicketAggregate> eventSourcingHandler)
     : IRequestHandler<TicketCreateCommand, bool>
     {
-        private readonly IEventModelRepository _eventModelRepository = eventModelRepository;
-        private readonly IMapper _mapper = mapper;
-        public async Task<bool> Handle(TicketCreateCommand request, CancellationToken cancellationToken)
+        private readonly IEventSourcingHandler<TicketAggregate> _eventSourcingHandler = eventSourcingHandler;
+
+        public async Task<bool> Handle(
+            TicketCreateCommand request,
+            CancellationToken cancellationToken)
         {
-            var ticketEventData = _mapper.Map<TicketCreatedEvent>(request.ticketCreateRequest);
-            var eventModel = new EventModel
-            {
-                Timestamp = DateTime.UtcNow,
-                AggregateIdentifier = Guid.NewGuid().ToString(),
-                AggregateType = "TicketAggregate",
-                Version = 1,
-                EventType = "TicketCreatedEvent",
-                EventData = ticketEventData
-            };
-
-            IClientSessionHandle session = await _eventModelRepository.BeginSessionAsync(cancellationToken);
-
-            try
-            {
-                _eventModelRepository.BeginTransactionAsync(session);
-                //insercion
-                await _eventModelRepository.InsertOneAsync(eventModel, session, cancellationToken);
-                //confirmar
-                await _eventModelRepository.CommitTransactionAsync(session, cancellationToken);
-
-                _eventModelRepository.DisposeSession(session);
-                return true;
-
-            }
-            catch (Exception)
-            {
-                await _eventModelRepository
-                .RollbackTransactionAsync(session, cancellationToken);
-
-                _eventModelRepository.DisposeSession(session);
-                return false;
-            }
+            var aggregate = new TicketAggregate(request);
+            await _eventSourcingHandler.SaveAsync(aggregate, cancellationToken);
+            return true;
 
         }
     }
