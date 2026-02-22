@@ -108,6 +108,8 @@ volumes:
     driver: local
   zookeeper_data:
     driver: local
+  postgres_data:
+    driver: local
 
 networks:
   default:
