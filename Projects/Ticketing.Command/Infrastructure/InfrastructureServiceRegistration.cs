@@ -31,6 +31,8 @@ public static class InfrastructureServiceRegistration
         services.AddTransient<IEventStore, EventStore>();
         services.AddTransient<IEventSourcingHandler<TicketAggregate>, TicketingEventSourcingHandler>();
 
+        services.AddScoped<IEventProducer, TicketEventProducer>();
+
         return services;
     }
 }

@@ -1,5 +1,7 @@
 using Common.Core.Events;
+using Microsoft.Extensions.Options;
 using MongoDB.Driver;
+using Ticketing.Command.Application.Models;
 using Ticketing.Command.Domain.Abstracts;
 using Ticketing.Command.Domain.EventModels;
 
@@ -8,10 +10,15 @@ namespace Ticketing.Command.Infrastructure.Persistence;
 public class EventStore : IEventStore
 {
     private readonly IEventModelRepository _eventModelRepository;
+    private readonly KafkaSettings _kafkaSettings;
+    private readonly IEventProducer _eventProducer;
 
-    public EventStore(IEventModelRepository eventModelRepository)
+    public EventStore(IEventModelRepository eventModelRepository, IOptions<KafkaSettings> kafkaSettings, IEventProducer eventProducer)
     {
         _eventModelRepository = eventModelRepository;
+        _kafkaSettings = kafkaSettings.Value;
+        _eventProducer = eventProducer;
+
     }
     public async Task<List<BaseEvent>> GetEventsAsync(string aggregateId, CancellationToken cancellationToken)
     {
@@ -58,8 +65,12 @@ public class EventStore : IEventStore
                 EventData = @event
             };
 
-            //insertar
+            //insertar a db
             await AddEventStore(eventModel, cancellationToken);
+
+            //insertar a kafka
+            var topic = _kafkaSettings.Topic ?? throw new Exception("No se encuentra topic");
+            await _eventProducer.ProduceAsync(topic, @event);
         }
 
     }
